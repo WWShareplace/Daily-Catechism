@@ -23,8 +23,8 @@ interface ShareModalProps {
   activeTab?: ActiveTab;
 }
 
-// The permanent, verified custom production domain configured for this applet
-export const VERIFIED_PERMANENT_URL = 'https://catechism-daily.ai.studio/';
+// The permanent, verified production domain on Vercel
+export const VERIFIED_PERMANENT_URL = 'https://daily-catechism.vercel.app/';
 
 export const ShareModal: React.FC<ShareModalProps> = ({ 
   isOpen, 
@@ -32,11 +32,11 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   customUrl,
   activeTab = 'daily' 
 }) => {
-  // Determine clean baseline URL: prefer verified permanent domain
+  // Determine clean baseline URL: prefer live origin if on Vercel/custom domain, otherwise VERIFIED_PERMANENT_URL
   const getBaseDomain = () => {
     if (typeof window !== 'undefined' && window.location) {
       const origin = window.location.origin;
-      // If deployed on an external custom domain (not localhost and not internal dev runner)
+      // If deployed on Vercel or external domain
       if (origin && !origin.includes('localhost') && !origin.includes('ais-dev-') && !origin.includes('ais-pre-')) {
         return origin.endsWith('/') ? origin : `${origin}/`;
       }
@@ -229,10 +229,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                     ? 'bg-white text-stone-900 shadow-xs border border-stone-300/80 font-semibold'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
-                title="Permanent official domain (never expires or 404s)"
+                title="Vercel production domain: daily-catechism.vercel.app"
               >
                 <Globe className={`w-3.5 h-3.5 ${selectedUrlMode === 'official' ? 'text-amber-700' : 'text-stone-400'}`} />
-                <span className="truncate">Main App</span>
+                <span className="truncate">Vercel App</span>
               </button>
 
               <button
@@ -272,7 +272,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <strong>Warning:</strong> Temporary Cloud Run preview links (<code>ais-pre-*</code>) can expire or trigger a <strong>404 Page Not Found</strong>. Switch to <strong>Main App</strong> ({VERIFIED_PERMANENT_URL}) for a guaranteed permanent link.
+                <strong>Warning:</strong> Temporary preview links (<code>ais-pre-*</code>) can expire or trigger a <strong>404 Page Not Found</strong>. Switch to <strong>Vercel App</strong> ({VERIFIED_PERMANENT_URL}) for a guaranteed permanent link.
               </div>
             </div>
           )}
@@ -304,7 +304,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-stone-700">
-                {selectedUrlMode === 'official' && 'Permanent Verified URL (No 404)'}
+                {selectedUrlMode === 'official' && 'Vercel Production URL (daily-catechism.vercel.app)'}
                 {selectedUrlMode === 'section' && `Direct Section Link (${tabLabels[activeTab]})`}
                 {selectedUrlMode === 'custom' && 'Custom / Parish Web Address'}
               </label>
@@ -359,7 +359,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
             {selectedUrlMode === 'official' && (
               <p className="text-[11px] text-stone-500 leading-relaxed">
-                Permanent web address: <strong className="text-stone-700 font-mono">https://catechism-daily.ai.studio/</strong>. Always online, SSL-secured, and accessible immediately by any phone camera or web browser without login.
+                Vercel web address: <strong className="text-stone-700 font-mono">https://daily-catechism.vercel.app/</strong>. Always online, SSL-secured, and accessible immediately by any phone camera or web browser without login.
               </p>
             )}
             {selectedUrlMode === 'section' && (
@@ -380,7 +380,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               <a
                 id="download-qr-btn"
                 href={qrCodeDataUrl}
-                download="catholic-catechism-daily-qr.png"
+                download="daily-catechism-qr.png"
                 className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-semibold transition-colors"
                 title="Download QR code image for print bulletins, parish flyers, or handouts"
               >
