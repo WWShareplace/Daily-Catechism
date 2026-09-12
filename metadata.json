@@ -1,0 +1,6 @@
+{
+  "name": "Catholic Catechism Daily",
+  "description": "Daily practical insights and lookups from the Catechism of the Catholic Church for adults learning and growing in the faith.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
