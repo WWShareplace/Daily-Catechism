@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { Sparkles, Send, BookOpen, AlertCircle, Copy, Check, HelpCircle, StopCircle, RefreshCw } from 'lucide-react';
+import { Sparkles, Send, BookOpen, AlertCircle, Copy, Check, HelpCircle, StopCircle, RefreshCw, Database } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { CatechismPillar } from '../types';
+import { generateCatechismFallbackAnswer } from '../lib/catechismFallback';
 
 const SAMPLE_QUESTIONS = [
   'Why do Catholics confess sins to a priest instead of praying directly to God?',
@@ -20,6 +21,7 @@ export const AskCatechismView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -49,6 +51,7 @@ export const AskCatechismView: React.FC = () => {
     setLoading(true);
     setIsStreaming(true);
     setError(null);
+    setFallbackNotice(null);
     setResponse('');
 
     // Safety timeout: 35 seconds max
@@ -62,64 +65,12 @@ export const AskCatechismView: React.FC = () => {
     }, 35000);
 
     try {
-      // First attempt: Streamed SSE endpoint for instant token rendering
-      const res = await fetch('/api/ask-catechism-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: q,
-          userContext: learnerContext,
-          selectedPillar: selectedPillar !== 'All Pillars' ? selectedPillar : undefined,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        throw new Error(`Server returned status ${res.status}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
       let accumulatedText = '';
       let streamFinished = false;
 
-      while (!streamFinished) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-          const dataStr = trimmed.replace(/^data:\s*/, '');
-          if (dataStr === '[DONE]') {
-            streamFinished = true;
-            break;
-          }
-
-          try {
-            const parsed = JSON.parse(dataStr);
-            if (parsed.error) {
-              throw new Error(parsed.error);
-            }
-            if (parsed.text) {
-              accumulatedText += parsed.text;
-              setResponse(accumulatedText);
-            }
-          } catch (e: any) {
-            if (e.message && e.message !== 'Unexpected token') {
-              console.warn('SSE line parse issue:', e);
-            }
-          }
-        }
-      }
-
-      if (!accumulatedText.trim()) {
-        // Fallback to standard JSON endpoint if stream was completely empty
-        const fallbackRes = await fetch('/api/ask-catechism', {
+      // 1. Attempt streaming SSE endpoint
+      try {
+        const res = await fetch('/api/ask-catechism-stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -130,21 +81,92 @@ export const AskCatechismView: React.FC = () => {
           signal: controller.signal,
         });
 
-        const fallbackData = await fallbackRes.json();
-        if (!fallbackRes.ok) {
-          throw new Error(fallbackData.error || 'Failed to get an answer from the Catechism assistant.');
+        if (res.ok && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (!streamFinished) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+              const dataStr = trimmed.replace(/^data:\s*/, '');
+              if (dataStr === '[DONE]') {
+                streamFinished = true;
+                break;
+              }
+
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.error) {
+                  throw new Error(parsed.error);
+                }
+                if (parsed.text) {
+                  accumulatedText += parsed.text;
+                  setResponse(accumulatedText);
+                }
+              } catch (e: any) {
+                if (e.message && e.message !== 'Unexpected token') {
+                  console.warn('SSE line parse issue:', e);
+                }
+              }
+            }
+          }
         }
-        setResponse(fallbackData.answer);
+      } catch (streamErr: any) {
+        if (streamErr.name === 'AbortError') throw streamErr;
+        console.warn('Streaming endpoint unavailable or returned error, falling back to standard JSON API:', streamErr);
+      }
+
+      // 2. If stream did not yield content, attempt standard JSON endpoint
+      if (!accumulatedText.trim()) {
+        try {
+          const fallbackRes = await fetch('/api/ask-catechism', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: q,
+              userContext: learnerContext,
+              selectedPillar: selectedPillar !== 'All Pillars' ? selectedPillar : undefined,
+            }),
+            signal: controller.signal,
+          });
+
+          if (fallbackRes.ok) {
+            const fallbackData = await fallbackRes.json();
+            if (fallbackData.answer) {
+              accumulatedText = fallbackData.answer;
+              setResponse(accumulatedText);
+            }
+          }
+        } catch (jsonErr: any) {
+          if (jsonErr.name === 'AbortError') throw jsonErr;
+          console.warn('JSON endpoint error, falling back to built-in Catechism knowledge database:', jsonErr);
+        }
+      }
+
+      // 3. Resilient fallback: If server-side endpoints are unreachable (e.g. 405 on static CDN/Vercel rewrite, or offline),
+      // synthesize a verified response directly from the authoritative Catechism database.
+      if (!accumulatedText.trim()) {
+        const fallbackResult = generateCatechismFallbackAnswer(q, learnerContext, selectedPillar);
+        setResponse(fallbackResult.answer);
+        setFallbackNotice('Grounded in official Catechism of the Catholic Church database & Sacred Scripture.');
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
         // User deliberately stopped or timeout fired
-        if (!error) {
-          // If stopped by user, keep whatever response was generated
-        }
       } else {
         console.error('Ask Catechism Error:', err);
-        setError(err.message || 'An error occurred while connecting to the Catechism assistant. Please try again.');
+        // Even on unexpected error, provide the database fallback
+        const fallbackResult = generateCatechismFallbackAnswer(q, learnerContext, selectedPillar);
+        setResponse(fallbackResult.answer);
+        setFallbackNotice('Grounded in official Catechism of the Catholic Church database & Sacred Scripture.');
       }
     } finally {
       clearTimeout(timeoutId);
@@ -324,6 +346,12 @@ export const AskCatechismView: React.FC = () => {
                   Generating...
                 </span>
               )}
+              {fallbackNotice && !isStreaming && (
+                <span className="hidden sm:inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-amber-900/60 text-amber-200 border border-amber-700/60">
+                  <Database className="w-3 h-3 text-amber-300" />
+                  <span>Catechism Synthesis</span>
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -357,12 +385,18 @@ export const AskCatechismView: React.FC = () => {
             )}
           </div>
 
-          <div className="p-4 bg-stone-50 border-t border-stone-200 text-xs text-stone-500 flex items-center justify-between">
-            <span>Primary Reference: Catechism of the Catholic Church (CCC)</span>
+          <div className="p-4 bg-stone-50 border-t border-stone-200 text-xs text-stone-500 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span>Primary Reference: Catechism of the Catholic Church (CCC)</span>
+              {fallbackNotice && (
+                <span className="text-amber-800 font-medium">• {fallbackNotice}</span>
+              )}
+            </div>
             <button
               onClick={() => {
                 setResponse(null);
                 setQuestion('');
+                setFallbackNotice(null);
               }}
               className="font-semibold text-amber-800 hover:underline"
             >
